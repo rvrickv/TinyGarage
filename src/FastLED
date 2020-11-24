@@ -1,0 +1,212 @@
+/*
+ * Created on Wed Sep 30 2020
+ *  
+ * Copyright (c) 2020 Your Company
+ */
+
+
+#include <Arduino.h>
+#include <U8g2lib.h>
+#include <elapsedMillis.h>
+
+#define FASTLED_INTERNAL
+#include <FastLED.h>
+
+#include <NewPing.h>
+
+#include <Button.h>
+#include <ButtonEventCallback.h>
+#include <BasicButton.h>
+
+
+
+//For OLED only - mostly debugging
+#define OLED_SDA  16
+#define OLED_SCL 15
+#define OLED_RESET 4
+
+
+// LED RING FASTLED DEFINITIONS
+#define PIN_LED_RING  18
+#define NUM_LEDS 7
+#define LED_TYPE NEOPIXEL
+#define MAX_AMP_DRAW  35
+
+#define PIN_BUTTON 36 
+#define LONG_PRESS 2000
+
+// HC-SRO4 DEFINITIONS
+#define PIN_TRIGGER 14
+#define PIN_ECHO 27
+#define MAX_DISTANCE 250
+#define LOW_PRECISION 0
+#define SAMPLES 5
+
+#define PARKING_DISTANCE 100
+#define TIME_TO_SLEEP 5000
+
+U8G2_SSD1306_128X64_NONAME_F_HW_I2C g_oled(U8G2_R2, OLED_SDA, OLED_SCL, OLED_RESET);
+NewPing g_sonar(PIN_TRIGGER, PIN_ECHO, MAX_DISTANCE);
+
+// initialize the LED ring
+CRGB g_leds[NUM_LEDS];
+
+// for OLED debugging 
+int g_lineHeight = 0;
+
+bool g_highPrecision = false;
+uint16_t g_oldDistance = 0;
+uint16_t g_ParkingDistance = PARKING_DISTANCE;
+
+// Related to sleeping 
+uint16_t g_parkedTime = 0;
+elapsedMillis g_timeElapsed;
+
+// Button handling
+BasicButton g_multiButton(PIN_BUTTON);
+
+uint16_t roundToBase(uint16_t value){
+  const uint16_t base = 5;
+
+  if (g_highPrecision) {
+    // round to the base based passed to the function
+    return uint16_t(base * round(float(value)/base));
+  }
+  else
+  {
+    // use low precision logarithmic smooting. Values will be limited to
+    // 10 20 30... 90 100 200 300
+    uint8_t len = log10(value);
+    float div = pow(10,len);
+    return (ceil(value/div)*div);
+  }
+}
+
+uint16_t reset_parking_distance(){
+
+  uint16_t new_distance = roundToBase(g_sonar.convert_cm(g_sonar.ping_median(SAMPLES*2))); // twice as many samples for safety
+  new_distance += 5;  // a small buffer to ensure we're "Red"
+  g_parkedTime = 0; // reset the parked time to "wakeup" lights and pinging
+
+  //EEPROM.put(0,new_distance);  // write the new distance to eeprom
+
+  return (new_distance);
+}
+
+void showColor(CRGB color){
+  for (int i = 0; i<NUM_LEDS; i++)
+    g_leds[i] = color;
+  
+  FastLED.show();
+}
+
+void onShortPress()
+{
+  Serial.println("Button Press");
+  g_highPrecision = !g_highPrecision;
+  if (g_highPrecision){
+    showColor(CRGB::Lavender);
+    delay(100);
+  }  
+}
+
+void onLongPress(Button& btn, uint16_t duration)
+{
+  Serial.println("Long Press - reset parking distance");
+  //Blink the LEDs to show we're going to reset the distance
+  showColor(CRGB::Blue);
+  delay (250);
+  showColor(CRGB::Black);
+  delay (250);
+ 
+  g_ParkingDistance = reset_parking_distance();
+  Serial.println(g_ParkingDistance);
+
+  // ugly little hack -- change the old distance so the LEDs light up again (hopefully red)
+  g_oldDistance = 0;
+
+}
+
+void onButtonPressed(Button& btn, uint16_t duration){
+  if (duration > LONG_PRESS )
+    {}// do nothing, the onHold will take care of it
+  else
+    onShortPress();
+}
+
+
+
+void setup() {
+  Serial.begin (9600);
+
+  pinMode(LED_BUILTIN, OUTPUT);
+
+  pinMode(PIN_BUTTON, INPUT);
+
+  // Setup the oled screen for debugging
+  g_oled.begin();
+  g_oled.clear();
+  g_oled.setFont(u8g2_font_logisoso22_tr); 
+  g_lineHeight = g_oled.getFontAscent() + 1; 
+
+
+  // Initialize the LED strip and set the power limit for battery efficiency
+  FastLED.addLeds<LED_TYPE,PIN_LED_RING>(g_leds, NUM_LEDS);
+  set_max_power_in_volts_and_milliamps(5,MAX_AMP_DRAW);
+  
+  // Initialize the button
+  //g_multiButton.onPress(onShortPress);
+  //g_multiButton.onHold(1000, onLongPress);
+  g_multiButton.onRelease(onButtonPressed);
+  g_multiButton.onHold(LONG_PRESS,onLongPress);
+
+
+
+}
+
+void DrawLinesAndGraphicsFrame(uint16_t distance)
+{
+    g_oled.clearBuffer();
+    g_oled.home();
+    g_oled.drawFrame(0,0,g_oled.getWidth(), g_oled.getHeight());
+    g_oled.setCursor(5,g_oled.getHeight()/2 + g_lineHeight/2);
+    g_oled.printf("Dist: %03d",distance);
+    g_oled.sendBuffer();
+}
+
+
+
+
+
+void loop() {
+  uint16_t distance = g_sonar.convert_cm(g_sonar.ping_median(SAMPLES));
+
+  distance = roundToBase(distance);
+
+  if (distance != g_oldDistance){
+    g_oldDistance = distance;
+    g_timeElapsed = 0;
+    digitalWrite(LED_BUILTIN,LOW);
+    //Serial.println("New distance");
+
+    if (distance > g_ParkingDistance)
+        showColor(CRGB::Green);
+    if (distance <= g_ParkingDistance && distance > 0)
+        showColor(CRGB::Red);
+    if (distance == 0)
+        showColor(CRGB::Black);
+  } else {
+    if (g_timeElapsed >= TIME_TO_SLEEP) {
+      showColor(CRGB::Black);
+      digitalWrite(LED_BUILTIN, HIGH);  // for debugging only -- to show we're sleeping
+
+    }
+  }
+  
+  g_multiButton.update();
+
+  DrawLinesAndGraphicsFrame(distance);
+
+  delay (50);
+
+}
