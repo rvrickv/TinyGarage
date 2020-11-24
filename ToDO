@@ -3,4 +3,4 @@ ToDO:
 o Sleep is resetting to setup() instead of continuing from loop - need to test
 o Can I write my own sleep timer using a watchdog?
 o Determine how long is the measurement cycle
-o Woudl slowing down the measuring cycle to just 1/sec reduce power consumption?
+o Would slowing down the measuring cycle to just 1/sec reduce power consumption?
