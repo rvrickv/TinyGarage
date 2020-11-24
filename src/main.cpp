@@ -4,6 +4,13 @@
  * ATTiny85 Garage Parking assist
  * 
  * Copyright (c) 2020 Rick Villela
+ * 
+ * 
+ * ATTiny 85 running at 8MHz internal clock
+ * HC-SR04 Sonar
+ * 7 LED WS2812 ring as a display. 
+ * P-Channel MOSFET
+ * 
  */
 
 
@@ -21,7 +28,7 @@
 #include <BasicButton.h>
 
 
-// LED RING FASTLED DEFINITIONS
+// LED RING  DEFINITIONS
 #define PIN_LED_RING  2
 #define NUM_LEDS 7
 #define LED_BRIGHTNESS 40
